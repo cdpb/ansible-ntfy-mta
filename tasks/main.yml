@@ -1,0 +1,75 @@
+---
+
+- ansible.builtin.fail:
+    msg: define ntfy_channel first
+  when: ntfy_channel is not defined
+  tags: always
+
+- name: install ntfy
+  template:
+    src: templates/ntfy.j2
+    dest: /usr/local/bin/ntfy
+    mode: '0777'
+  tags: install
+  register: install
+
+- name: get last msg
+  ansible.builtin.shell:
+    cmd: |
+      lastmsg=$(curl -s -m 2 ntfy.sh/{{ ntfy_channel }}/json?since=168h | jq 'select(.event == "message") | .time' | sort -rn | head -n1)
+      if [[ ! -n $lastmsg ]]; then
+        # get msg from last logs if exist
+        lastmsg=$(ls -1 /tmp/ | grep -e 'ntfy_.*.log' | sed -n 's/ntfy_\([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\)-.*/\1/p' | xargs -I {} date -d {} +%s | sort -rn | head -n1)
+      fi
+
+      if [[ -n $lastmsg ]]; then
+        echo $(( ( $(date +%s) - $lastmsg ) / 3600 ))
+      else
+        echo 169
+      fi
+    executable: /bin/bash
+  register: lastmsg
+  changed_when: false
+
+- block:
+  - name: remove all mta
+    package:
+      name: "{{ item }}"
+      state: absent
+    with_items:
+        - sendmail
+        - postfix
+    ignore_errors: True
+
+  - name: ntfy - send test msg
+    shell: "This is a test from $(hostname) | ntfy"
+    register: test1
+
+  - block:
+    - name: update alternatives
+      community.general.alternatives:
+        name: mta
+        link: /usr/sbin/sendmail
+        path: /usr/local/bin/ntfy
+        state: selected
+        priority: 100
+
+    - name: add sendmail link (fake mta)
+      file:
+        state: link
+        src: /etc/alternatives/mta
+        path: /usr/sbin/sendmail
+        force: True
+    when: test1 is succeeded
+    tags: link
+
+  - name: ntfy - send test msg
+    shell: "Final MTA test from $(hostname) | sendmail"
+    register: test2
+
+  - debug:
+      msg: "test done, MTA installed"
+    when: test2 is succeeded
+  when: 
+    - not ansible_check_mode
+    - lastmsg.stdout | int >= 168

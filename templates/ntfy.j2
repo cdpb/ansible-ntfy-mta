@@ -1,0 +1,37 @@
+#!/bin/bash
+
+LOG=/tmp/ntfy_
+
+if [[ ! -z $1 && ${1:0:1} != '-' ]]; then
+  HMESSAGE="$1"
+else
+  HMESSAGE="$( cat )"
+fi
+
+if [[ $(echo "$HMESSAGE" | grep 'To:') ]]; then
+  # mail
+  BREAK=$( echo "$HMESSAGE" | grep -n '^$' | cut -d':' -f1 | head -n1 )
+  MESSAGE=$( echo "$HMESSAGE" | sed "2,$((BREAK))d" )
+else
+  # stdin or arg
+  MESSAGE="$HMESSAGE"
+fi
+
+HEADER="$(hostname -s) $(date +%F-%T-%z) <$(whoami)>"
+MESSAGE=$(echo -e "$HEADER \n$MESSAGE")
+
+if ! grep -q "commands will be executed using /bin/sh" <<< "$MESSAGE" ; then
+  if [[ -n $2 ]]; then
+    curl -d "$MESSAGE" -H "Title: Message from $(hostname)" ntfy.sh/{{ ntfy_channel }}?email=$2
+  else
+  curl -d "$MESSAGE" -H "Title: Message from $(hostname)" ntfy.sh/{{ ntfy_channel }}
+  fi
+fi
+
+if [[ $(\ls ${LOG}* | wc -l) -gt 20 ]]; then
+  if [[ $? -eq 0 ]]; then
+    rm -v ${LOG}*
+  fi
+fi
+
+echo "$MESSAGE" > ${LOG}$(date +%F-%T)_$RANDOM.log
